@@ -10,8 +10,8 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Если ключ есть — будет OpenAI, если нет/ошибка — мок
-# Можно положить переменные в .env (пример: backend/env.example.txt)
+# Нужен ключ OpenAI или локальный OpenAI-совместимый API (например, Ollama).
+# Можно положить переменные в .env (пример: backend/.env.example)
 export OPENAI_API_KEY="..."
 export OPENAI_MODEL="gpt-4o-mini"
 
@@ -30,12 +30,9 @@ npm run dev
 
 ## Что внутри
 
-- `/api/chat/stream` — SSE поток событий.
-- `/api/tools` — список инструментов, отображаемых на фронте.
-- Инструменты: `get_time`, `roll_dice`, `add`.
-
-События похожи на AG-UI стиль: `session_started`, `tool_call`, `tool_result`,
-`message_delta`, `message_completed`, `warning`, `error`.
+- `/api/agent` — основной AG-UI поток (AGUIAdapter).
+- `/api/tools` — список backend-инструментов, отображаемых на фронте.
+- Инструменты: backend `get_time`, frontend `updateCounter`, `getCounter`.
 
 CopilotKit runtime endpoint: `http://localhost:8000/copilotkit/info`
 

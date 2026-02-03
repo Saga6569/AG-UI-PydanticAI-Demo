@@ -7,9 +7,15 @@ from typing import Any, Dict, List
 
 @dataclass(frozen=True)
 class Tool:
+    # Описание backend-инструмента для фронта и выбора моделью.
     name: str
     description: str
     input_schema: Dict[str, Any]
+
+
+def get_time() -> str:
+    # Возвращаем текущее время UTC (ISO-8601).
+    return datetime.now(timezone.utc).isoformat()
 
 
 TOOLS: List[Tool] = [
@@ -21,9 +27,4 @@ TOOLS: List[Tool] = [
 ]
 
 
-def run_tool(name: str, args: Dict[str, Any] | None) -> str:
-    args = args or {}
-    if name == "get_time":
-        return datetime.now(timezone.utc).isoformat()
-    raise ValueError(f"Неизвестный инструмент: {name}")
 

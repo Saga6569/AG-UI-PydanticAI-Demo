@@ -1,5 +1,5 @@
-fastapi==0.115.0
+fastapi>=0.120.0
 uvicorn[standard]==0.30.6
-pydantic-ai==0.0.21
+pydantic-ai-slim[ag-ui,openai]>=0.0.30
 python-dotenv==1.0.1
 
