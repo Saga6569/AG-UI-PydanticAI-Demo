@@ -4,19 +4,11 @@ import { HttpAgent, randomUUID } from '@ag-ui/client'
 const AGENT_ENDPOINT =
   import.meta.env.VITE_AGENT_URL || 'http://localhost:8000/api/agent'
 
-// Заготовка под типы фронтовых tool (оставлено для расширения демо).
-type FrontendTool = {
-  description: string
-  run: (args: { text?: string }) => Promise<Record<string, unknown>>
-}
-
 type ToolSchema = {
   name: string
   description: string
   parameters: Record<string, unknown>
 }
-
-export const frontendToolSchemas: ToolSchema[] = []
 
 // HttpAgent управляет run, событиями и состоянием AG-UI.
 export const agent = new HttpAgent({

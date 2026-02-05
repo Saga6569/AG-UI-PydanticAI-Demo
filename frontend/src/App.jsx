@@ -272,9 +272,6 @@ function App() {
     return 'Вызываются по тексту запроса (например: «сколько времени?»).'
   }, [tools])
 
-
-  console.log(messages)
-
   return (
     <div className="app">
       <header className="app__header">
