@@ -5,30 +5,55 @@ import { agent, buildUserMessage } from './aguiAgent'
 // Базовый префикс API для backend.
 const API_BASE = '/api'
 
-// Frontend tool: обновить счетчик (set + delta).
-const updateCounterTool = {
-  name: 'updateCounter',
+const AVAILABLE_THEMES = ['light', 'dark', 'blue', 'solarized']
+
+// Frontend tool: обновить демо-состояние (можно менять один или несколько полей).
+const updateDemoStateTool = {
+  name: 'updateDemoState',
   description:
-    'Change the counter: value sets an exact number, delta adds or subtracts. You can pass both.',
+    'Update demo state: count sets exact value, delta adds/subtracts, step updates step, label updates label, theme updates theme. Any field is optional.',
   parameters: {
     type: 'object',
     properties: {
-      value: {
+      count: {
         type: 'number',
         description: 'Exact counter value (optional)',
       },
       delta: {
         type: 'number',
-        description: 'Number to add (optional)',
+        description: 'Number to add to count (optional)',
+      },
+      step: {
+        type: 'number',
+        description: 'Step value (optional)',
+      },
+      label: {
+        type: 'string',
+        description: 'Label for the demo state (optional)',
+      },
+      theme: {
+        type: 'string',
+        description: 'Theme name (optional)',
+        enum: AVAILABLE_THEMES,
       },
     },
   },
 }
 
-// Frontend tool: вернуть текущее значение счетчика.
-const getCounterTool = {
-  name: 'getCounter',
-  description: 'Return the current counter value',
+// Frontend tool: вернуть текущее демо-состояние.
+const getDemoStateTool = {
+  name: 'getDemoState',
+  description: 'Return the current demo state',
+  parameters: {
+    type: 'object',
+    properties: {},
+  },
+}
+
+// Frontend tool: вернуть список доступных тем.
+const getAvailableThemesTool = {
+  name: 'getAvailableThemes',
+  description: 'Return available theme names',
   parameters: {
     type: 'object',
     properties: {},
@@ -73,7 +98,12 @@ function App() {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [tools, setTools] = useState([])
-  const [counter, setCounter] = useState(0)
+  const [demoState, setDemoState] = useState({
+    count: 0,
+    step: 1,
+    label: 'Демо',
+    theme: 'dark',
+  })
   const [status, setStatus] = useState('Готово')
   const [error, setError] = useState('')
   const assistantIdRef = useRef(null)
@@ -81,6 +111,13 @@ function App() {
   const lastUserMessageRef = useRef('')
 
   // Загружаем backend-инструменты для отображения в UI.
+  useEffect(() => {
+    const root = document.getElementById('root')
+    if (root) {
+      root.setAttribute('data-theme', demoState.theme)
+    }
+  }, [demoState.theme])
+
   useEffect(() => {
     const loadTools = async () => {
       try {
@@ -134,7 +171,7 @@ function App() {
     async (assistantId) => {
       // Запуск AG-UI run: отдаём фронтовые tools и ждём результата.
       const response = await agent.runAgent({
-        tools: [updateCounterTool, getCounterTool],
+        tools: [updateDemoStateTool, getDemoStateTool, getAvailableThemesTool],
       })
       const awaitingTool = Boolean(response?.result?.awaiting_tool)
       const selectionSource = response?.result?.selection_source
@@ -206,37 +243,65 @@ function App() {
       onToolCallEndEvent: async ({ toolCallName, toolCallArgs, event }) => {
         if (!lastUserMessageRef.current) return
 
-        if (toolCallName === 'updateCounter') {
+        if (toolCallName === 'updateDemoState') {
           // Выполняем frontend tool на клиенте и отсылаем результат.
-          const rawValue = toolCallArgs?.value
+          const rawCount = toolCallArgs?.count
           const rawDelta = toolCallArgs?.delta
-          const hasValue = Number.isFinite(Number(rawValue))
+          const rawStep = toolCallArgs?.step
+          const rawLabel = toolCallArgs?.label
+          const rawTheme = toolCallArgs?.theme
+          const hasCount = Number.isFinite(Number(rawCount))
           const hasDelta = Number.isFinite(Number(rawDelta))
-          if (!hasValue && !hasDelta) {
-            setError('updateCounter: нужен value и/или delta')
+          const hasStep = Number.isFinite(Number(rawStep))
+          const hasLabel =
+            typeof rawLabel === 'string' && rawLabel.trim().length > 0
+          const hasTheme =
+            typeof rawTheme === 'string' &&
+            AVAILABLE_THEMES.includes(rawTheme.trim().toLowerCase())
+          if (!hasCount && !hasDelta && !hasStep && !hasLabel && !hasTheme) {
+            addMessage('tool', '(updateDemoState) no-op')
+            await runWithToolResult(JSON.stringify(demoState), event.toolCallId)
             return
           }
-          let nextValue = counter
-          if (hasValue) {
-            nextValue = Number(rawValue)
+          const nextState = { ...demoState }
+          if (hasCount) {
+            nextState.count = Number(rawCount)
           }
           if (hasDelta) {
-            nextValue += Number(rawDelta)
+            nextState.count += Number(rawDelta)
           }
-          setCounter(nextValue)
-          addMessage('tool', `(updateCounter) ${counter} → ${nextValue}`)
-          await runWithToolResult(String(nextValue), event.toolCallId)
+          if (hasStep) {
+            nextState.step = Number(rawStep)
+          }
+          if (hasLabel) {
+            nextState.label = rawLabel.trim()
+          }
+          if (hasTheme) {
+            nextState.theme = rawTheme.trim().toLowerCase()
+          }
+          setDemoState(nextState)
+          addMessage(
+            'tool',
+            `(updateDemoState) count: ${demoState.count} → ${nextState.count}, step=${nextState.step}, label="${nextState.label}", theme=${nextState.theme}`
+          )
+          await runWithToolResult(JSON.stringify(nextState), event.toolCallId)
         }
 
-        if (toolCallName === 'getCounter') {
-          addMessage('tool', `(getCounter) ${counter}`)
-          await runWithToolResult(String(counter), event.toolCallId)
+        if (toolCallName === 'getDemoState') {
+          addMessage('tool', `(getDemoState) ${JSON.stringify(demoState)}`)
+          await runWithToolResult(JSON.stringify(demoState), event.toolCallId)
+        }
+
+        if (toolCallName === 'getAvailableThemes') {
+          const payload = JSON.stringify(AVAILABLE_THEMES)
+          addMessage('tool', `(getAvailableThemes) ${AVAILABLE_THEMES.join(', ')}`)
+          await runWithToolResult(payload, event.toolCallId)
         }
       },
     })
 
     return () => subscription.unsubscribe()
-  }, [addMessage, counter, runWithToolResult])
+  }, [addMessage, demoState, runWithToolResult])
 
   // Отправка сообщения пользователя и запуск run.
   const sendMessage = async ({ message }) => {
@@ -269,7 +334,7 @@ function App() {
   // Текст подсказки в боковой панели инструментов.
   const toolHint = useMemo(() => {
     if (!tools.length) return 'Инструменты не загружены.'
-    return 'Вызываются по тексту запроса (например: «сколько времени?»).'
+    return 'Вызываются по тексту запроса (например: «какие темы доступны?»).'
   }, [tools])
 
   return (
@@ -279,7 +344,10 @@ function App() {
         <p className="app__subtitle">
           Стриминг событий, инструменты и мок при отсутствии ключа OpenAI.
         </p>
-        <div className="app__counter">Счётчик: {counter}</div>
+        <div className="app__counter">
+          Состояние: count={demoState.count}, step={demoState.step}, label=
+          {demoState.label}, theme={demoState.theme}
+        </div>
       </header>
 
       <section className="app__panel">
@@ -310,16 +378,23 @@ function App() {
           <h2>Tools</h2>
           <p className="tools__hint">{toolHint}</p>
           <div className="tools__item">
-            <div className="tools__title">{updateCounterTool.name}</div>
-            <div className="tools__desc">{updateCounterTool.description}</div>
+            <div className="tools__title">{updateDemoStateTool.name}</div>
+            <div className="tools__desc">{updateDemoStateTool.description}</div>
             <div className="tools__desc">
-              Пример: «обнули счетчик и прибавь 1».
+              Пример: «установи count в 10, шаг 2, label "быстро", theme "solarized"».
             </div>
           </div>
           <div className="tools__item">
-            <div className="tools__title">{getCounterTool.name}</div>
-            <div className="tools__desc">{getCounterTool.description}</div>
-            <div className="tools__desc">Пример: «какое значение счетчика?».</div>
+            <div className="tools__title">{getDemoStateTool.name}</div>
+            <div className="tools__desc">{getDemoStateTool.description}</div>
+            <div className="tools__desc">Пример: «покажи состояние».</div>
+          </div>
+          <div className="tools__item">
+            <div className="tools__title">{getAvailableThemesTool.name}</div>
+            <div className="tools__desc">{getAvailableThemesTool.description}</div>
+            <div className="tools__desc">
+              Пример: «какие темы доступны?».
+            </div>
           </div>
           {tools.map((tool) => (
             <div key={tool.name} className="tools__item">
