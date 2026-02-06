@@ -35,6 +35,38 @@ def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
+def _copilotkit_runtime_info() -> Dict[str, Any]:
+    # Минимальный ответ runtime, чтобы CopilotKit мог подключиться.
+    # Формат соответствует RuntimeInfo из @copilotkitnext/shared.
+    return {
+        "version": "0.0.0",
+        "agents": {
+            "default": {
+                "name": "default",
+                "className": "DemoAgent",
+                "description": "Default demo agent",
+            }
+        },
+        "audioFileTranscriptionEnabled": False,
+    }
+
+
+@app.get("/copilotkit")
+@app.post("/copilotkit")
+async def copilotkit_root(request: Request) -> Dict[str, Any]:
+    # CopilotKit может слать POST на runtimeUrl с { method: "info" }.
+    # Возвращаем info для любого POST, чтобы избежать ошибок синхронизации.
+    if request.method == "POST":
+        return _copilotkit_runtime_info()
+    return {"status": "ok"}
+
+
+@app.get("/copilotkit/info")
+@app.post("/copilotkit/info")
+def copilotkit_info() -> Dict[str, Any]:
+    return _copilotkit_runtime_info()
+
+
 @app.get("/api/tools")
 def list_tools() -> Dict[str, Any]:
     # Отдаём backend-инструменты для отображения на фронте.

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCopilotAction } from '@copilotkit/react-core'
 import './App.css'
 import { agent, buildUserMessage } from './aguiAgent'
 
@@ -7,83 +8,72 @@ const API_BASE = '/api'
 
 const AVAILABLE_THEMES = ['light', 'dark', 'blue', 'solarized']
 
-// Frontend tool: обновить демо-состояние (можно менять один или несколько полей).
-const updateDemoStateTool = {
-  name: 'updateDemoState',
-  description:
-    'Update demo state: count sets exact value, delta adds/subtracts, step updates step, label updates label, theme updates theme. Any field is optional.',
-  parameters: {
-    type: 'object',
-    properties: {
-      count: {
-        type: 'number',
-        description: 'Exact counter value (optional)',
-      },
-      delta: {
-        type: 'number',
-        description: 'Number to add to count (optional)',
-      },
-      step: {
-        type: 'number',
-        description: 'Step value (optional)',
-      },
-      label: {
-        type: 'string',
-        description: 'Label for the demo state (optional)',
-      },
-      theme: {
-        type: 'string',
-        description: 'Theme name (optional)',
-        enum: AVAILABLE_THEMES,
-      },
-    },
+const UPDATE_DEMO_STATE_PARAMS = [
+  {
+    name: 'count',
+    type: 'number',
+    description: 'Exact counter value (optional)',
+    required: false,
   },
+  {
+    name: 'delta',
+    type: 'number',
+    description: 'Number to add to count (optional)',
+    required: false,
+  },
+  {
+    name: 'step',
+    type: 'number',
+    description: 'Step value (optional)',
+    required: false,
+  },
+  {
+    name: 'label',
+    type: 'string',
+    description: 'Label for the demo state (optional)',
+    required: false,
+  },
+  {
+    name: 'theme',
+    type: 'string',
+    description: 'Theme name (optional)',
+    enum: AVAILABLE_THEMES,
+    required: false,
+  },
+]
+
+const buildJsonSchemaFromCopilotParams = (parameters = []) => {
+  const properties = {}
+  const required = []
+  parameters.forEach((param) => {
+    const { name, type = 'string', description, enum: enumValues, required: isRequired } =
+      param
+    const schema = { type: 'string' }
+    if (type.endsWith('[]')) {
+      const itemType = type.replace('[]', '')
+      schema.type = 'array'
+      schema.items = { type: itemType }
+    } else {
+      schema.type = type
+    }
+    if (description) schema.description = description
+    if (Array.isArray(enumValues)) schema.enum = enumValues
+    properties[name] = schema
+    if (isRequired !== false) required.push(name)
+  })
+  return {
+    type: 'object',
+    properties,
+    required,
+    additionalProperties: false,
+  }
 }
 
-// Frontend tool: вернуть текущее демо-состояние.
-const getDemoStateTool = {
-  name: 'getDemoState',
-  description: 'Return the current demo state',
-  parameters: {
-    type: 'object',
-    properties: {},
-  },
-}
-
-// Frontend tool: вернуть список доступных тем.
-const getAvailableThemesTool = {
-  name: 'getAvailableThemes',
-  description: 'Return available theme names',
-  parameters: {
-    type: 'object',
-    properties: {},
-  },
-}
-
-// import { useCopilotAction } from "@copilotkit/react-core"
-//
-// // Пример CopilotKit tool: обновление счетчика через UI.
-// // useCopilotAction({
-// //   name: "updateCounter",
-// //   description: "Set counter to value and/or change it by delta",
-// //   parameters: {
-// //     type: "object",
-// //     properties: {
-// //       value: { type: "number", description: "Exact counter value (optional)" },
-// //       delta: { type: "number", description: "Number to add (optional)" },
-// //     },
-// //   },
-// //   handler: async ({ value, delta }) => {
-// //     const hasValue = Number.isFinite(value)
-// //     const hasDelta = Number.isFinite(delta)
-// //     if (!hasValue && !hasDelta) return "no-op"
-// //     let nextValue = counter
-// //     if (hasValue) nextValue = value
-// //     if (hasDelta) nextValue += delta
-// //     setCounter(nextValue)
-// //     return String(nextValue)
-// //   },
-// // })
+const toAgUiTool = (action) => ({
+  name: action.name,
+  description: action.description,
+  parameters: buildJsonSchemaFromCopilotParams(action.parameters || []),
+})
 
 
 
@@ -109,6 +99,109 @@ function App() {
   const assistantIdRef = useRef(null)
   const pendingAssistantIdRef = useRef(null)
   const lastUserMessageRef = useRef('')
+
+  const normalizeTheme = useCallback((value) => {
+    if (typeof value !== 'string') return null
+    const normalized = value.trim().toLowerCase()
+    return AVAILABLE_THEMES.includes(normalized) ? normalized : null
+  }, [])
+
+  const buildDemoStateUpdate = useCallback(
+    (baseState, args = {}) => {
+      const rawCount = args.count
+      const rawDelta = args.delta
+      const rawStep = args.step
+      const rawLabel = args.label
+      const rawTheme = args.theme
+      const hasCount = Number.isFinite(Number(rawCount))
+      const hasDelta = Number.isFinite(Number(rawDelta))
+      const hasStep = Number.isFinite(Number(rawStep))
+      const hasLabel = typeof rawLabel === 'string' && rawLabel.trim().length > 0
+      const normalizedTheme = normalizeTheme(rawTheme)
+      const hasTheme = Boolean(normalizedTheme)
+      const changed = hasCount || hasDelta || hasStep || hasLabel || hasTheme
+      const nextState = { ...baseState }
+      if (hasCount) {
+        nextState.count = Number(rawCount)
+      }
+      if (hasDelta) {
+        nextState.count += Number(rawDelta)
+      }
+      if (hasStep) {
+        nextState.step = Number(rawStep)
+      }
+      if (hasLabel) {
+        nextState.label = rawLabel.trim()
+      }
+      if (hasTheme) {
+        nextState.theme = normalizedTheme
+      }
+      return { nextState, changed }
+    },
+    [normalizeTheme]
+  )
+
+  const applyDemoStateUpdate = useCallback(
+    (args = {}) => {
+      const { nextState, changed } = buildDemoStateUpdate(demoState, args)
+      if (changed) {
+        setDemoState(nextState)
+      }
+      return { nextState, changed }
+    },
+    [buildDemoStateUpdate, demoState]
+  )
+
+  const updateDemoStateAction = useMemo(
+    () => ({
+      name: 'updateDemoState',
+      description:
+        'Update demo state: count sets exact value, delta adds/subtracts, step updates step, label updates label, theme updates theme. Any field is optional.',
+      parameters: UPDATE_DEMO_STATE_PARAMS,
+      handler: async ({ count, delta, step, label, theme }) => {
+        const { nextState } = applyDemoStateUpdate({
+          count,
+          delta,
+          step,
+          label,
+          theme,
+        })
+        return JSON.stringify(nextState)
+      },
+    }),
+    [applyDemoStateUpdate]
+  )
+
+  const getDemoStateAction = useMemo(
+    () => ({
+      name: 'getDemoState',
+      description: 'Return the current demo state',
+      handler: async () => JSON.stringify(demoState),
+    }),
+    [demoState]
+  )
+
+  const getAvailableThemesAction = useMemo(
+    () => ({
+      name: 'getAvailableThemes',
+      description: 'Return available theme names',
+      handler: async () => JSON.stringify(AVAILABLE_THEMES),
+    }),
+    []
+  )
+
+  useCopilotAction(updateDemoStateAction, [applyDemoStateUpdate])
+  useCopilotAction(getDemoStateAction, [demoState])
+  useCopilotAction(getAvailableThemesAction)
+
+  const frontendTools = useMemo(
+    () => [
+      toAgUiTool(updateDemoStateAction),
+      toAgUiTool(getDemoStateAction),
+      toAgUiTool(getAvailableThemesAction),
+    ],
+    [updateDemoStateAction, getDemoStateAction, getAvailableThemesAction]
+  )
 
   // Загружаем backend-инструменты для отображения в UI.
   useEffect(() => {
@@ -171,7 +264,7 @@ function App() {
     async (assistantId) => {
       // Запуск AG-UI run: отдаём фронтовые tools и ждём результата.
       const response = await agent.runAgent({
-        tools: [updateDemoStateTool, getDemoStateTool, getAvailableThemesTool],
+        tools: frontendTools,
       })
       const awaitingTool = Boolean(response?.result?.awaiting_tool)
       const selectionSource = response?.result?.selection_source
@@ -193,7 +286,7 @@ function App() {
         addMessage('status', `tool selection: ${selectionSource}`)
       }
     },
-    [addMessage, extractAgentText]
+    [addMessage, extractAgentText, frontendTools]
   )
 
   // Отправляем результат frontend tool и получаем финальный ответ.
@@ -245,44 +338,18 @@ function App() {
 
         if (toolCallName === 'updateDemoState') {
           // Выполняем frontend tool на клиенте и отсылаем результат.
-          const rawCount = toolCallArgs?.count
-          const rawDelta = toolCallArgs?.delta
-          const rawStep = toolCallArgs?.step
-          const rawLabel = toolCallArgs?.label
-          const rawTheme = toolCallArgs?.theme
-          const hasCount = Number.isFinite(Number(rawCount))
-          const hasDelta = Number.isFinite(Number(rawDelta))
-          const hasStep = Number.isFinite(Number(rawStep))
-          const hasLabel =
-            typeof rawLabel === 'string' && rawLabel.trim().length > 0
-          const hasTheme =
-            typeof rawTheme === 'string' &&
-            AVAILABLE_THEMES.includes(rawTheme.trim().toLowerCase())
-          if (!hasCount && !hasDelta && !hasStep && !hasLabel && !hasTheme) {
+          const prevState = demoState
+          const { nextState, changed } = applyDemoStateUpdate(
+            toolCallArgs || {}
+          )
+          if (!changed) {
             addMessage('tool', '(updateDemoState) no-op')
-            await runWithToolResult(JSON.stringify(demoState), event.toolCallId)
+            await runWithToolResult(JSON.stringify(prevState), event.toolCallId)
             return
           }
-          const nextState = { ...demoState }
-          if (hasCount) {
-            nextState.count = Number(rawCount)
-          }
-          if (hasDelta) {
-            nextState.count += Number(rawDelta)
-          }
-          if (hasStep) {
-            nextState.step = Number(rawStep)
-          }
-          if (hasLabel) {
-            nextState.label = rawLabel.trim()
-          }
-          if (hasTheme) {
-            nextState.theme = rawTheme.trim().toLowerCase()
-          }
-          setDemoState(nextState)
           addMessage(
             'tool',
-            `(updateDemoState) count: ${demoState.count} → ${nextState.count}, step=${nextState.step}, label="${nextState.label}", theme=${nextState.theme}`
+            `(updateDemoState) count: ${prevState.count} → ${nextState.count}, step=${nextState.step}, label="${nextState.label}", theme=${nextState.theme}`
           )
           await runWithToolResult(JSON.stringify(nextState), event.toolCallId)
         }
@@ -301,7 +368,7 @@ function App() {
     })
 
     return () => subscription.unsubscribe()
-  }, [addMessage, demoState, runWithToolResult])
+  }, [addMessage, applyDemoStateUpdate, demoState, runWithToolResult])
 
   // Отправка сообщения пользователя и запуск run.
   const sendMessage = async ({ message }) => {
@@ -378,20 +445,20 @@ function App() {
           <h2>Tools</h2>
           <p className="tools__hint">{toolHint}</p>
           <div className="tools__item">
-            <div className="tools__title">{updateDemoStateTool.name}</div>
-            <div className="tools__desc">{updateDemoStateTool.description}</div>
+            <div className="tools__title">{updateDemoStateAction.name}</div>
+            <div className="tools__desc">{updateDemoStateAction.description}</div>
             <div className="tools__desc">
               Пример: «установи count в 10, шаг 2, label "быстро", theme "solarized"».
             </div>
           </div>
           <div className="tools__item">
-            <div className="tools__title">{getDemoStateTool.name}</div>
-            <div className="tools__desc">{getDemoStateTool.description}</div>
+            <div className="tools__title">{getDemoStateAction.name}</div>
+            <div className="tools__desc">{getDemoStateAction.description}</div>
             <div className="tools__desc">Пример: «покажи состояние».</div>
           </div>
           <div className="tools__item">
-            <div className="tools__title">{getAvailableThemesTool.name}</div>
-            <div className="tools__desc">{getAvailableThemesTool.description}</div>
+            <div className="tools__title">{getAvailableThemesAction.name}</div>
+            <div className="tools__desc">{getAvailableThemesAction.description}</div>
             <div className="tools__desc">
               Пример: «какие темы доступны?».
             </div>
